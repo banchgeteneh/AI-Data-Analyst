@@ -35,7 +35,11 @@ def test_non_development_settings_only_allow_configured_origins() -> None:
         database_url="mysql+pymysql://analyst:safe-production-password@db.example.com/analyst",
     )
 
-    assert settings.allowed_frontend_origins == ["https://app.example.com", "https://admin.example.com"]
+    assert settings.allowed_frontend_origins == [
+        "https://app.example.com",
+        "https://admin.example.com",
+        "https://ai-data-analyst-phi.vercel.app",
+    ]
 
 
 def test_production_settings_reject_default_jwt_secret() -> None:

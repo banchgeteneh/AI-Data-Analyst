@@ -31,6 +31,8 @@ The frontend reads `VITE_API_BASE_URL` at build time. It must point to the publi
 
 Production settings validation rejects debug mode, short/default JWT secrets, placeholder database credentials, wildcard origins, and non-HTTPS/local frontend origins. Configure a unique random JWT secret of at least 32 characters and exact HTTPS CORS origins. The frontend origin and CORS allow-list must agree.
 
+The production API explicitly allows `https://ai-data-analyst-phi.vercel.app` in addition to the origins configured with `FRONTEND_URL` and `FRONTEND_ORIGINS`. CORS credentials remain enabled only for these explicit origins.
+
 ## Database and Migrations
 
 Provision MySQL and a dedicated database/user, then configure `DATABASE_URL`. On a fresh database, from `backend/` and with the backend environment active, run:

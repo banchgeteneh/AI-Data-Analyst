@@ -67,8 +67,11 @@ class Settings(BaseSettings):
     @property
     def allowed_frontend_origins(self) -> list[str]:
         configured = [self.frontend_url, *self.frontend_origins.split(",")]
-        if self.app_env.strip().lower() in {"development", "dev"}:
+        environment = self.app_env.strip().lower()
+        if environment in {"development", "dev"}:
             configured.extend(("http://localhost:5173", "http://127.0.0.1:5173"))
+        elif environment in {"production", "prod"}:
+            configured.append("https://ai-data-analyst-phi.vercel.app")
 
         origins: list[str] = []
         for origin in configured:

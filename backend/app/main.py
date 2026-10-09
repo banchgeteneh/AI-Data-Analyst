@@ -6,13 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.database import check_database_connection
 
 
 configure_logging()
-settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
@@ -29,12 +28,22 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.allowed_frontend_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.include_router(api_router)
+def create_app(settings: Settings | None = None) -> FastAPI:
+    app_settings = settings or get_settings()
+    application = FastAPI(
+        title=app_settings.app_name,
+        debug=app_settings.debug,
+        lifespan=lifespan,
+    )
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=app_settings.allowed_frontend_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    application.include_router(api_router)
+    return application
+
+
+app = create_app()

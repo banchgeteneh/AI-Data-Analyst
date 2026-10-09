@@ -7,10 +7,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.config import Settings
 from app.core.security import verify_password
 from app.db.base import Base
 from app.db.session import get_db
-from app.main import app
+from app.main import app, create_app
 from app.models.user import User
 
 
@@ -115,3 +116,32 @@ async def test_login_rejects_incorrect_credentials() -> None:
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid email or password"
+
+
+@pytest.mark.anyio
+async def test_production_cors_allows_vercel_registration_preflight() -> None:
+    production_settings = Settings(
+        _env_file=None,
+        app_env="production",
+        frontend_url="https://app.example.com",
+        jwt_secret_key="a-random-production-secret-with-at-least-32-characters",
+        mysql_password="safe-production-password",
+        database_url="mysql+pymysql://user:password@db.example.com/analyst",
+    )
+    production_app = create_app(production_settings)
+    transport = httpx.ASGITransport(app=production_app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
+        response = await test_client.options(
+            "/api/v1/auth/register",
+            headers={
+                "Origin": "https://ai-data-analyst-phi.vercel.app",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://ai-data-analyst-phi.vercel.app"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert response.headers["access-control-allow-credentials"] == "true"
