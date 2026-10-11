@@ -5,7 +5,7 @@
 ```text
 Browser -> HTTPS static frontend or reverse proxy
         -> HTTPS FastAPI service
-FastAPI -> production MySQL
+FastAPI -> production Supabase PostgreSQL
         -> private persistent upload storage
         -> Groq API (AI features only)
 ```
@@ -14,7 +14,7 @@ This is a deployment design, not a claim that the project is deployed. The suppl
 
 ## Development and Production
 
-Development uses Vite, FastAPI reload mode, local MySQL/optional Compose MySQL, and local private upload storage. Production should use HTTPS, an explicit frontend origin, `APP_ENV=production`, `DEBUG=false`, a managed/production MySQL service, private durable upload storage, and a production ASGI process manager/reverse proxy appropriate to the host. Do not use development passwords, reload mode, wildcard CORS, or a publicly served upload directory.
+Development uses Vite, FastAPI reload mode, local MySQL/optional Compose MySQL, and local private upload storage. Production uses HTTPS, an explicit frontend origin, `APP_ENV=production`, `DEBUG=false`, Supabase PostgreSQL, private durable upload storage, and the host's production ASGI process. Do not use development passwords, reload mode, wildcard CORS, or a publicly served upload directory.
 
 ## Configuration
 
@@ -35,13 +35,33 @@ The production API explicitly allows `https://ai-data-analyst-phi.vercel.app` in
 
 ## Database and Migrations
 
-Provision MySQL and a dedicated database/user, then configure `DATABASE_URL`. On a fresh database, from `backend/` and with the backend environment active, run:
+Local development can use MySQL through `mysql+pymysql://...`; production must set `DATABASE_URL` to the Supabase PostgreSQL session-pooler URL. The application normalizes `postgresql://` and `postgres://` URLs to the installed psycopg 3 driver without changing the supplied pooler username. Keep special characters in the password URL-encoded. Production configuration rejects a MySQL URL so a missing production variable cannot silently use the local fallback.
+
+On a fresh database, from `backend/` and with the backend environment active, run:
 
 ```powershell
-python -m alembic upgrade head
+.\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-Run migrations as a controlled deployment step before serving code that depends on the new schema. Review new migration scripts before applying them. Migration configuration takes its URL from application settings.
+The chain creates `users`, then `datasets`, then replaces the email unique index with a named unique constraint. Run migrations as a controlled deployment step before serving code that depends on the schema; do not run them in application startup or per worker. The local MySQL database is migrated forward in place and its existing records are not dropped or copied to production.
+
+## Render Web Service
+
+Set the Render service **Root Directory** to `backend`. `alembic upgrade head` must run against the same Render `DATABASE_URL` as the API, and a failed migration must prevent the new API process from starting.
+
+If the current Render service plan supports a pre-deploy command, configure:
+
+| Render field | Command |
+| --- | --- |
+| Build Command | `pip install -r requirements.txt` |
+| Pre-Deploy Command | `alembic upgrade head` |
+| Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+
+Render does not expose the current service plan in this repository, so verify that pre-deploy commands are supported before selecting this option. Otherwise set the Start Command to `sh start.sh`. That script runs `alembic upgrade head` first and starts Uvicorn only if the migration succeeds. It is also the backend Docker image's default command. The direct Uvicorn start command is appropriate only when the pre-deploy migration is configured.
+
+Set the Render environment variables `APP_ENV=production`, `DEBUG=false`, `DATABASE_URL` (the Supabase session-pooler connection URL), a unique `JWT_SECRET_KEY` of at least 32 characters, and the frontend origin settings. Retain the pooler's exact username from Supabase. For the connection URL, select the **Session pooler** option in Supabase's Connect panel. Never place this URL in frontend variables, commit it, or include it in logs.
+
+Before redeploying, confirm the Render `DATABASE_URL` points to the intended PostgreSQL database and run the migration once using the chosen pre-deploy or startup path. Do not use `alembic stamp` to conceal missing schema changes. After deployment, check the deploy logs for the successful Alembic upgrade and verify the API's database-backed endpoints.
 
 ## Files and Secrets
 
@@ -51,9 +71,9 @@ Provide secrets through the hosting platform's secret/environment mechanism. `.e
 
 ## Build and Runtime
 
-Build the frontend in `frontend/` with `npm run build`, then serve the generated `dist/` directory from static hosting or a web server with SPA route fallback. Build with the production `VITE_API_BASE_URL` configured. Build/run the backend using `backend/Dockerfile` or an equivalent Python 3.13 environment; install `requirements.txt` and serve `app.main:app` with an appropriate production ASGI setup. Terminate TLS at the host or reverse proxy. Apply migrations separately.
+Build the frontend in `frontend/` with `npm run build`, then serve the generated `dist/` directory from static hosting or a web server with SPA route fallback. Build with the production `VITE_API_BASE_URL` configured. Build/run the backend using `backend/Dockerfile` or an equivalent Python 3.13 environment; install `requirements.txt` and configure the Render migration/start commands above. Terminate TLS at the host or reverse proxy.
 
-The API startup logs a warning if the database is unavailable and still starts, but database-backed functionality will fail. Include database connectivity in deployment health monitoring; `/api/v1/health` only indicates that the API process responds, not that dependencies are healthy.
+The API starts if the database is unavailable so the process health endpoint can respond, but database-backed requests return a controlled error. Startup diagnostics log only the error class, not the connection URL or driver error details. `/api/v1/health` indicates that the API process responds, not that the database is healthy.
 
 ## Docker Status
 

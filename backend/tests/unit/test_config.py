@@ -11,6 +11,39 @@ def test_settings_load_foundation_defaults() -> None:
     assert settings.database_url.startswith("mysql+pymysql://")
 
 
+def test_postgresql_url_uses_psycopg_without_changing_pooler_identity() -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url=(
+            "postgresql://postgres.project-ref:p%40ssword"
+            "@aws-0-eu-west-2.pooler.supabase.com:5432/postgres"
+        ),
+    )
+
+    assert settings.database_url.startswith("postgresql+psycopg://")
+    assert "postgres.project-ref" in settings.database_url
+    assert "p%40ssword@" in settings.database_url
+
+
+def test_mysql_url_without_driver_uses_pymysql() -> None:
+    settings = Settings(_env_file=None, database_url="mysql://user:password@localhost/analyst")
+
+    assert settings.database_url.startswith("mysql+pymysql://")
+
+
+def test_production_settings_reject_mysql_database_url() -> None:
+    with pytest.raises(ValueError, match="PostgreSQL with the psycopg driver") as error:
+        Settings(
+            _env_file=None,
+            app_env="production",
+            debug=False,
+            jwt_secret_key="a-random-production-secret-with-at-least-32-characters",
+            database_url="mysql+pymysql://user:sensitive-test-password@db.example.com/analyst",
+        )
+
+    assert "sensitive-test-password" not in str(error.value)
+
+
 def test_groq_model_default_uses_supported_generation_model() -> None:
     settings = Settings(_env_file=None)
 
@@ -32,7 +65,7 @@ def test_non_development_settings_only_allow_configured_origins() -> None:
         frontend_origins="https://admin.example.com, https://app.example.com/",
         jwt_secret_key="a-random-production-secret-with-at-least-32-characters",
         mysql_password="safe-production-password",
-        database_url="mysql+pymysql://analyst:safe-production-password@db.example.com/analyst",
+        database_url="postgresql://analyst:safe-production-password@db.example.com/analyst",
     )
 
     assert settings.allowed_frontend_origins == [
@@ -79,7 +112,7 @@ def test_production_settings_reject_localhost_frontend_origin() -> None:
             debug=False,
             frontend_url="http://localhost:5173",
             jwt_secret_key="a-random-production-secret-with-at-least-32-characters",
-            database_url="mysql+pymysql://analyst:safe-production-password@db.example.com/analyst",
+            database_url="postgresql://analyst:safe-production-password@db.example.com/analyst",
         )
 
 

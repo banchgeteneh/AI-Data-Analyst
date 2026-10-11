@@ -2,8 +2,10 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.exc import ArgumentError
+from sqlalchemy.engine import make_url
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -38,7 +40,24 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        hide_input_in_errors=True,
     )
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        if not value or not value.strip():
+            return value
+        try:
+            url = make_url(value.strip())
+        except (ArgumentError, TypeError, ValueError):
+            raise ValueError("DATABASE_URL must be a valid SQLAlchemy connection URL") from None
+
+        if url.drivername in {"postgres", "postgresql"}:
+            url = url.set(drivername="postgresql+psycopg")
+        elif url.drivername == "mysql":
+            url = url.set(drivername="mysql+pymysql")
+        return url.render_as_string(hide_password=False)
 
     @model_validator(mode="after")
     def validate_production_configuration(self) -> "Settings":
@@ -53,7 +72,12 @@ class Settings(BaseSettings):
             raise ValueError("DEBUG must be disabled in production")
         if len(self.jwt_secret_key) < 32 or self.jwt_secret_key.strip().lower() in {"change-me", "replace-with-a-long-random-secret"}:
             raise ValueError("JWT_SECRET_KEY must be a unique random value of at least 32 characters in production")
-        if "change-me" in self.database_url.lower():
+        database_url = make_url(self.database_url)
+        if database_url.drivername != "postgresql+psycopg":
+            raise ValueError("Production DATABASE_URL must use PostgreSQL with the psycopg driver")
+        if not database_url.host or not database_url.database or not database_url.username:
+            raise ValueError("Production DATABASE_URL must include a database host, name, and username")
+        if "change-me" in (database_url.password or "").lower():
             raise ValueError("Production database credentials must be configured")
         for origin in self.allowed_frontend_origins:
             parsed = urlsplit(origin)

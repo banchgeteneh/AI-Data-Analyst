@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -79,6 +80,17 @@ async def test_duplicate_email_is_rejected() -> None:
 
 
 @pytest.mark.anyio
+async def test_registration_rejects_whitespace_only_name() -> None:
+    async with client() as test_client:
+        response = await test_client.post(
+            "/api/v1/auth/register",
+            json={"name": "   ", "email": "user@example.com", "password": "password123"},
+        )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
 async def test_login_returns_jwt_and_me_requires_valid_token() -> None:
     async with client() as test_client:
         await test_client.post(
@@ -119,6 +131,32 @@ async def test_login_rejects_incorrect_credentials() -> None:
 
 
 @pytest.mark.anyio
+async def test_registration_returns_controlled_error_when_database_is_unavailable() -> None:
+    def fail_get_db() -> None:
+        raise OperationalError(
+            "SELECT 1",
+            {},
+            Exception("sensitive connection detail"),
+        )
+
+    app.dependency_overrides[get_db] = fail_get_db
+    async with client() as test_client:
+        response = await test_client.post(
+            "/api/v1/auth/register",
+            json={"name": "Example User", "email": "user@example.com", "password": "password123"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": (
+            "Database unavailable. Verify the deployment's DATABASE_URL and "
+            "database credentials, then retry."
+        )
+    }
+    assert "sensitive connection detail" not in response.text
+
+
+@pytest.mark.anyio
 async def test_production_cors_allows_vercel_registration_preflight() -> None:
     production_settings = Settings(
         _env_file=None,
@@ -126,7 +164,7 @@ async def test_production_cors_allows_vercel_registration_preflight() -> None:
         frontend_url="https://app.example.com",
         jwt_secret_key="a-random-production-secret-with-at-least-32-characters",
         mysql_password="safe-production-password",
-        database_url="mysql+pymysql://user:password@db.example.com/analyst",
+        database_url="postgresql://user:password@db.example.com/analyst",
     )
     production_app = create_app(production_settings)
     transport = httpx.ASGITransport(app=production_app)
